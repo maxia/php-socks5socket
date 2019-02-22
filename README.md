@@ -8,9 +8,7 @@ A simple SOCKS5 client implementation in PHP.
 <pre>
 require '../Client.php';
 
-$s = new Maxia\Socks5\Client();
-
-$s->configureProxy(array(
+$s = new Maxia\Socks5\Client([
 	'hostname' => '127.0.0.1',
 	'port' => 9150
 	/*
@@ -18,7 +16,7 @@ $s->configureProxy(array(
 	'password' => 'password',
 	'use_dnstunnel' => true
 	 */
-));
+]);
 
 $s->connect('bot.whatismyipaddress.com', 80);
 

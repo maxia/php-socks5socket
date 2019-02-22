@@ -273,7 +273,7 @@ class Client
 	 * @access protected
 	 * @return string
 	 */
-	private function buildSocksAuth($username, $password)
+	protected function buildSocksAuth($username, $password)
 	{
 		return pack("CC", 0x01, strlen($username)).$username.pack("C", strlen($password)).$password;
 	}
