@@ -1,13 +1,13 @@
 <?php
 
-/** 
- * A simple socket client that supports SOCKS5 proxies.
- * 
+/**
+ * A simple SOCKS5 client implementation.
+ *
  * @author Maxi Arnicke <maxi.arnicke@gmail.com>
- * @license MIT License (http://opensource.org/licenses/MIT)
+ * @license MIT
  */
 
-namespace Socks5Socket;
+namespace Maxia\Socks5;
 
 class Exception extends \Exception {}
 class IOException extends Exception {}
@@ -20,10 +20,10 @@ class Socks5ConnectionException extends Socks5Exception {}
 class Client
 {
 	/**
-	 * Contains the php socket resource, or null if not connected. 
+	 * Contains the php socket resource, or null if not connected.
 	 * @var resource socket
 	 */
-	protected $socket;
+	protected $stream;
 
 	/**
 	 * Contains the timeout to use for connections.
@@ -37,15 +37,16 @@ class Client
 	 */
 	protected $socks_config;
 
-	/**
-	 * Constuctor
-	 */
+    /**
+     * Constuctor
+     * @param null $config
+     */
 	public function __construct($config = null)
 	{
 		if (is_array($config))
 			$this->configureProxy($config);
 	}
-	
+
 	/**
 	 * Destructor
 	 */
@@ -56,7 +57,7 @@ class Client
 
 	/**
 	 * Sets the proxy config for future connections.
-	 * 
+	 *
 	 * @param array $config Proxy config array
 	 * @access public
 	 */
@@ -73,10 +74,10 @@ class Client
 			'password' => ''
 		), $config);
 	}
-	
+
 	/**
 	 * Sets the timeout to use for future connections.
-	 * 
+	 *
 	 * @param int $seconds Timeout in seconds
 	 * @access public
 	 */
@@ -87,24 +88,30 @@ class Client
 
 	/**
 	 * Disconnects from the server.
-	 * 
+	 *
 	 * @access public
 	 */
 	public function disconnect()
 	{
-		if (is_resource($this->socket))
-			fclose($this->socket);
+		if (is_resource($this->stream))
+			fclose($this->stream);
 	}
-	
-	/**
-	 * Connects to the given server.
-	 * 
-	 * @param string  $host      Hostname
-	 * @param int     $port      Port
-	 * @param boolean $ssl       Optional: Wheter to use SSL encryption or not for this connection
-	 * @param int     $ssl_type  Optional: SSL encryption type (see: php.net/manual/en/function.stream-socket-enable-crypto.php)
-	 * @access public
-	 */
+
+    /**
+     * Connects to the given server.
+     *
+     * @param string $host Hostname
+     * @param int $port Port
+     * @param boolean $ssl Optional: Wheter to use SSL encryption or not for this connection
+     * @param int $ssl_type Optional: SSL encryption type (see: php.net/manual/en/function.stream-socket-enable-crypto.php)
+     * @throws ConnectionException
+     * @throws IOException
+     * @throws SSLException
+     * @throws Socks5AuthException
+     * @throws Socks5ConnectionException
+     * @throws Socks5Exception
+     * @access public
+     */
 	public function connect($host, $port, $ssl = false, $ssl_type = STREAM_CRYPTO_METHOD_SSLv3_CLIENT)
 	{
 		$this->disconnect();
@@ -112,7 +119,7 @@ class Client
 		if ($this->socks_config !== null)
 		{
 			// connect to socks server
-			$this->socket = $this->createSocket("tcp://{$this->socks_config['hostname']}:{$this->socks_config['port']}");
+			$this->stream = $this->createStream("tcp://{$this->socks_config['hostname']}:{$this->socks_config['port']}");
 
 			$method = empty($this->socks_config['username']) ? 0x00 : 0x02;
 			$this->send($this->buildSocksGreeting($method));
@@ -131,134 +138,136 @@ class Client
 			{
 				$this->send($this->buildSocksAuth($this->socks_config['username'], $this->socks_config['password']));
 				$response = unpack("Cversion/Cstatus", $this->read(3));
-				
+
 				if($response['status'] != 0x00)
 					throw new Socks5AuthException('SOCKS username/password authentication failed.');
 			}
 
 			// send connection request
 			$this->send($this->buildSocksConnectionRequest($host, $port, $this->socks_config['dns_tunnel']));
-			
+
 			$response = unpack("Cversion/Cresult/Creg/Ctype/Lip/Sport", $this->read(11));
 
-			if ($response['result'] != 0x00)
-			{
+			if ($response['result'] != 0x00) {
 				throw new Socks5ConnectionException('SOCKS connection request failed: '.static::getSocksRefusalMsg($respone['result']), $response['result']);
 			}
-		}
-		else
-		{
+
+		} else {
 			// use direct connection
-			$this->socket = $this->createSocket("tcp://$host:$port");
+			$this->stream = $this->createStream("tcp://$host:$port");
 		}
-		
+
 		// enable ssl, if required
 		if ($ssl)
 		{
-			if (stream_socket_enable_crypto($this->socket, TRUE, $ssl_type) !== true)
+			if (stream_socket_enable_crypto($this->stream, TRUE, $ssl_type) !== true)
 				throw new SSLException('Could not enable socket encryption.');
 		}
 	}
 
 	/**
-	 * Returns the native PHP socket resource.
-	 * (only available when already connected)
-	 * 
+	 * Returns the internal stream resource
+	 *
 	 * @access public
 	 * @return resource
 	 */
-	public function getNativeSocket()
+	public function getStream()
 	{
-		return $this->socket;
+		return $this->stream;
 	}
-	
-	/**
-	 * Returns the complete response.
-	 * 
-	 * @param int $maxlength Optional: maximum length to read
-	 * @param int $offset    Optional: offset
-	 * @access public
-	 * @return string
-	 */
+
+    /**
+     * Returns the complete response.
+     *
+     * @param int $maxlength Optional: maximum length to read
+     * @param int $offset Optional: offset
+     * @access public
+     * @return string
+     * @throws IOException
+     */
 	public function readAll($maxlength = -1, $offset = -1)
 	{
-		$data = stream_get_contents($this->socket, $maxlength, $offset);
+		$data = stream_get_contents($this->stream, $maxlength, $offset);
 
 		if ($data === false)
 			throw new IOException('Failed reading response.');
 
 		return $data;
 	}
-	
-	
-	/**
-	 * Reads the first line of the response.
-	 *
-	 * @param int $len
-	 * @access public
-	 * @return string
-	 */
-	public function readLine($size = 4096)
-	{	
-		$data = stream_get_line($this->socket, $size);
+
+
+    /**
+     * Reads the first line of the response.
+     *
+     * @param int $size
+     * @return string
+     * @throws IOException
+     * @access public
+     */
+	public function readLine($size = 4096, $ending = "\n")
+	{
+		$data = stream_get_line($this->stream, $size, $ending);
 
 		if ($data === false)
 			throw new IOException('Failed reading response.');
 
-		return $data;
+		return $data.$ending;
 	}
-	
-	/**
-	 * Reads bytes from the response.
-	 *
-	 * @param int $size
-	 * @access public
-	 * @return string
-	 */
+
+    /**
+     * Reads bytes from the response.
+     *
+     * @param int $size
+     * @access public
+     * @return string
+     * @throws IOException
+     */
 	public function read($size)
 	{
-		$data = fgets($this->socket, $size);
+		$data = fgets($this->stream, $size);
 
 		if ($data === false)
 			throw new IOException('Failed reading response.');
 
 		return $data;
 	}
-	
-	/**
-	 * Sends data
-	 *
-	 * @param string $data
-	 * @access public
-	 */
+
+    /**
+     * Sends data
+     *
+     * @param string $data
+     * @access public
+     * @throws IOException
+     */
 	public function send($data)
 	{
-		$size = fputs($this->socket, $data);
+		$size = fputs($this->stream, $data);
 
 		if ($size === false)
 			throw new IOException('Error sending data.');
 	}
-	
-	/**
-	 * Creates a socket stream client
-	 * 
-	 * @param string $url php url formatted string (transport://host:port)
-	 * @access protected
-	 * @return bool
-	 */
-	protected function createSocket($url)
+
+    /**
+     * Creates a socket stream client
+     *
+     * @param string $url php url formatted string (transport://host:port)
+     * @return resource
+     * @throws ConnectionException
+     * @access protected
+     */
+	protected function createStream($url)
 	{
-		$socket = stream_socket_client($url, $errno, $errstr, $this->timeout, STREAM_CLIENT_CONNECT);
-		
-		if( ! is_resource($socket))
+		$stream = stream_socket_client($url, $errno, $errstr, $this->timeout, STREAM_CLIENT_CONNECT);
+
+		if( ! is_resource($stream))
 			throw new ConnectionException('Failed creating socket client: '.$errstr, $errno);
 
-		return $socket;
+		return $stream;
 	}
-	
+
 	/**
 	 * Builds a SOCKS5 authentication request
-	 * 
+	 *
 	 * @param string $username
 	 * @param string $password
 	 * @access protected
@@ -280,7 +289,7 @@ class Client
 	{
 		return pack("C3", 0x05, 0x01, $method);
 	}
-	
+
 	/**
 	 * Builds a SOCKS5 connection request
 	 *
